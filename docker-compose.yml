@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  # Text Generation Inference - LLM Server
+  tgi:
+    image: ghcr.io/huggingface/text-generation-inference:latest
+    container_name: tgi-server
+    gpus:
+      - all
+    environment:
+      HF_TOKEN: "${HF_TOKEN:-}"
+      HF_HUB_CACHE: /root/.cache/huggingface
+    ports:
+      - "8001:80"
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+      - ./models:/models
+    command: |
+      --model-id Qwen/Qwen3-1.7B-Base
+      --max-input-length 1024
+      --max-total-tokens 2048
+      --max-batch-total-tokens 32000
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  # Flask OCR API
+  flask-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: flask-api-server
+    depends_on:
+      tgi:
+        condition: service_healthy
+    environment:
+      FLASK_ENV: production
+      HOST: 0.0.0.0
+      PORT: 8000
+      DEBUG: "False"
+      LLM_MODEL: Qwen/Qwen3-1.7B-Base
+      LLM_API_URL: "http://tgi:80/v1/chat/completions"
+      LLM_MAX_MODEL_LEN: "2048"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app:/app/app
+      - ./uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/id_card_scan/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
